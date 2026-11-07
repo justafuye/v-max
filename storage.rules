@@ -1,0 +1,19 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /tracks/{ownerId}/{trackId}/audio {
+      function isPublishedTrack() {
+        return firestore.get(/databases/(default)/documents/tracks/$(trackId)).data.status == 'published'
+          && firestore.get(/databases/(default)/documents/tracks/$(trackId)).data.ownerId == ownerId;
+      }
+
+      allow read: if (request.auth != null && request.auth.uid == ownerId)
+        || isPublishedTrack();
+      allow create, update: if request.auth != null
+        && request.auth.uid == ownerId
+        && request.resource.size <= 52428800
+        && request.resource.contentType.matches('audio/.*');
+      allow delete: if request.auth != null && request.auth.uid == ownerId;
+    }
+  }
+}

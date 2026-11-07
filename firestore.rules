@@ -1,0 +1,135 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function ownsTrack(trackId) {
+      return signedIn()
+        && get(/databases/$(database)/documents/tracks/$(trackId)).data.ownerId == request.auth.uid;
+    }
+
+    match /profiles/{userId} {
+      allow read: if true;
+      allow create, update: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.ownerId == userId
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() > 0
+        && request.resource.data.displayName.size() <= 40
+        && request.resource.data.bio is string
+        && request.resource.data.bio.size() <= 240
+        && request.resource.data.genres is list
+        && request.resource.data.genres.size() <= 5
+        && request.resource.data.keys().hasOnly(['ownerId', 'displayName', 'bio', 'genres', 'updatedAt']);
+      allow delete: if signedIn() && request.auth.uid == userId;
+    }
+
+    match /tracks/{trackId} {
+      allow read: if resource.data.status == 'published'
+        || (signedIn() && resource.data.ownerId == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.status == 'published'
+        && request.resource.data.rightsConfirmed == true
+        && request.resource.data.storagePath == 'tracks/' + request.auth.uid + '/' + trackId + '/audio'
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 100
+        && request.resource.data.artist is string
+        && request.resource.data.album is string
+        && request.resource.data.album.size() <= 100
+        && request.resource.data.description is string
+        && request.resource.data.description.size() <= 500
+        && request.resource.data.genre is string
+        && request.resource.data.image is string
+        && request.resource.data.audioUrl is string
+        && request.resource.data.allowOffline is bool
+        && request.resource.data.keys().hasOnly([
+          'ownerId', 'artist', 'title', 'album', 'description', 'genre', 'image',
+          'duration', 'audioUrl', 'storagePath', 'status', 'allowOffline',
+          'rightsConfirmed', 'createdAt', 'playCount'
+        ]);
+      allow update: if signedIn()
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['title', 'album', 'description', 'genre', 'image', 'status', 'allowOffline']);
+      allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
+
+      match /comments/{commentId} {
+        allow read: if get(/databases/$(database)/documents/tracks/$(trackId)).data.status == 'published'
+          || ownsTrack(trackId);
+        allow create: if signedIn()
+          && get(/databases/$(database)/documents/tracks/$(trackId)).data.status == 'published'
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.displayName is string
+          && request.resource.data.displayName.size() <= 80
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 500
+          && request.resource.data.keys().hasOnly(['userId', 'displayName', 'text', 'createdAt']);
+        allow update: if false;
+        allow delete: if signedIn()
+          && (resource.data.userId == request.auth.uid || ownsTrack(trackId));
+      }
+    }
+
+    match /playlists/{playlistId} {
+      allow read: if resource.data.visibility == 'public'
+        || (signedIn() && resource.data.ownerId == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.visibility == 'public'
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 80
+        && request.resource.data.description is string
+        && request.resource.data.description.size() <= 300
+        && request.resource.data.trackIds is list
+        && request.resource.data.trackIds.size() <= 30
+        && request.resource.data.trackNames is list
+        && request.resource.data.trackNames.size() <= 30
+        && request.resource.data.keys().hasOnly(['ownerId', 'title', 'description', 'trackIds', 'trackNames', 'visibility', 'createdAt']);
+      allow update: if signedIn()
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId;
+      allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
+    }
+
+    match /users/{userId}/following/{targetId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['followedAt'])
+        && exists(/databases/$(database)/documents/profiles/$(targetId));
+      allow delete: if signedIn() && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/likes/{trackId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.trackId == trackId
+        && request.resource.data.keys().hasOnly(['trackId', 'createdAt'])
+        && get(/databases/$(database)/documents/tracks/$(trackId)).data.status == 'published';
+      allow delete: if signedIn() && request.auth.uid == userId;
+    }
+
+    match /playEvents/{eventId} {
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.listenerId == request.auth.uid
+        && request.resource.data.trackId is string
+        && get(
+          /databases/$(database)/documents/tracks/$(request.resource.data.trackId)
+        ).data.status == 'published'
+        && request.resource.data.ownerId == get(
+          /databases/$(database)/documents/tracks/$(request.resource.data.trackId)
+        ).data.ownerId
+        && request.resource.data.keys().hasOnly(['ownerId', 'trackId', 'listenerId', 'createdAt']);
+      allow update, delete: if false;
+    }
+  }
+}
